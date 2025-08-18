@@ -253,7 +253,7 @@
                     <input 
                         type="file" 
                         id="fileInput" 
-                        accept="audio/*" 
+                        accept="audio/*,.mp3,.wav,.m4a,.ogg,.flac,.aac,.wma" 
                         multiple
                         style="display: none;"
                     >
@@ -268,7 +268,20 @@
         
         <div id="emptyState" class="empty-state">
             <h3>No sounds recorded yet</h3>
-            <p>Record your first sound to get started!</p>
+            <p>Record sounds or upload audio files to get started!</p>
+        </div>
+        
+        <div style="text-align: center; margin-top: 30px; padding: 20px; background: rgba(255, 255, 255, 0.1); border-radius: 12px;">
+            <button id="exportButton" class="save-button" style="margin-right: 10px;">
+                💾 Export Soundboard
+            </button>
+            <button id="importButton" class="save-button">
+                📂 Import Soundboard
+            </button>
+            <input type="file" id="importInput" accept=".json" style="display: none;">
+            <div style="margin-top: 10px; font-size: 14px; opacity: 0.8;">
+                Export/Import your entire soundboard as a backup
+            </div>
         </div>
     </div>
 
@@ -287,6 +300,7 @@
                 this.initializeElements();
                 this.initializeVisualizer();
                 this.bindEvents();
+                this.loadSounds();
                 this.updateUI();
             }
 
@@ -298,6 +312,11 @@
                 this.soundboardDiv = document.getElementById('soundboard');
                 this.emptyStateDiv = document.getElementById('emptyState');
                 this.visualizerDiv = document.getElementById('visualizer');
+                this.uploadButton = document.getElementById('uploadButton');
+                this.fileInput = document.getElementById('fileInput');
+                this.exportButton = document.getElementById('exportButton');
+                this.importButton = document.getElementById('importButton');
+                this.importInput = document.getElementById('importInput');
             }
 
             initializeVisualizer() {
@@ -317,6 +336,22 @@
                 this.soundNameInput.addEventListener('keypress', (e) => {
                     if (e.key === 'Enter') this.saveSound();
                 });
+                
+                // Fixed upload button event
+                this.uploadButton.addEventListener('click', (e) => {
+                    e.preventDefault();
+                    console.log('Upload button clicked');
+                    this.fileInput.click();
+                });
+                
+                this.fileInput.addEventListener('change', (e) => {
+                    console.log('File input changed');
+                    this.handleFileUpload(e);
+                });
+                
+                this.exportButton.addEventListener('click', () => this.exportSoundboard());
+                this.importButton.addEventListener('click', () => this.importInput.click());
+                this.importInput.addEventListener('change', (e) => this.handleImport(e));
             }
 
             async toggleRecording() {
@@ -453,6 +488,7 @@
                 };
                 
                 this.sounds.push(sound);
+                this.saveSounds();
                 this.updateUI();
                 
                 // Reset form
@@ -476,6 +512,7 @@
                         // Revoke the object URL to free memory
                         URL.revokeObjectURL(this.sounds[soundIndex].url);
                         this.sounds.splice(soundIndex, 1);
+                        this.saveSounds();
                         this.updateUI();
                     }
                 }
@@ -530,6 +567,348 @@
                 const div = document.createElement('div');
                 div.textContent = text;
                 return div.innerHTML;
+            }
+
+            async handleFileUpload(event) {
+                const files = Array.from(event.target.files);
+                if (files.length === 0) return;
+                
+                console.log('Files selected:', files.length);
+                this.statusDiv.textContent = `Processing ${files.length} file(s)...`;
+                
+                let successCount = 0;
+                
+                for (const file of files) {
+                    console.log('Processing file:', file.name, file.type);
+                    
+                    // Accept all files, not just audio/* (some audio files might have generic MIME types)
+                    try {
+                        await this.processUploadedFile(file);
+                        successCount++;
+                    } catch (error) {
+                        console.error(`Error processing ${file.name}:`, error);
+                        alert(`Error processing ${file.name}: ${error.message}`);
+                    }
+                }
+                
+                this.statusDiv.textContent = `Successfully added ${successCount} sound(s)!`;
+                this.fileInput.value = ''; // Reset file input
+                this.updateUI();
+            }
+
+            async processUploadedFile(file) {
+                return new Promise((resolve, reject) => {
+                    console.log('Creating blob URL for:', file.name);
+                    
+                    // Create URL directly from file
+                    const url = URL.createObjectURL(file);
+                    console.log('Created URL:', url);
+                    
+                    // Create audio element to get duration
+                    const audio = new Audio();
+                    
+                    const onLoadedMetadata = () => {
+                        console.log('Audio metadata loaded for:', file.name);
+                        const duration = Math.round(audio.duration * 100) / 100;
+                        const fileName = file.name.replace(/\.[^/.]+$/, ""); // Remove extension
+                        
+                        const sound = {
+                            id: Date.now() + Math.random(), // Ensure unique IDs
+                            name: fileName,
+                            url: url,
+                            duration: duration,
+                            blob: file, // Use original file as blob
+                            type: file.type || 'audio/mpeg' // Default to mp3 if no type
+                        };
+                        
+                        console.log('Adding sound:', sound);
+                        this.sounds.push(sound);
+                        this.saveSounds();
+                        
+                        // Clean up event listeners
+                        audio.removeEventListener('loadedmetadata', onLoadedMetadata);
+                        audio.removeEventListener('error', onError);
+                        audio.removeEventListener('canplaythrough', onCanPlay);
+                        
+                        resolve();
+                    };
+                    
+                    const onError = (e) => {
+                        console.error('Audio load error:', e);
+                        audio.removeEventListener('loadedmetadata', onLoadedMetadata);
+                        audio.removeEventListener('error', onError);
+                        audio.removeEventListener('canplaythrough', onCanPlay);
+                        URL.revokeObjectURL(url);
+                        reject(new Error(`Could not load audio file: ${file.name}`));
+                    };
+                    
+                    const onCanPlay = () => {
+                        console.log('Audio can play:', file.name);
+                        // Sometimes loadedmetadata doesn't fire, but canplaythrough does
+                        if (audio.duration && !isNaN(audio.duration)) {
+                            onLoadedMetadata();
+                        }
+                    };
+                    
+                    audio.addEventListener('loadedmetadata', onLoadedMetadata);
+                    audio.addEventListener('error', onError);
+                    audio.addEventListener('canplaythrough', onCanPlay);
+                    
+                    // Set source and load
+                    audio.src = url;
+                    audio.load();
+                    
+                    // Fallback timeout
+                    setTimeout(() => {
+                        if (audio.readyState === 0) {
+                            console.warn('Audio load timeout for:', file.name);
+                            // Try to add anyway with unknown duration
+                            const fileName = file.name.replace(/\.[^/.]+$/, "");
+                            const sound = {
+                                id: Date.now() + Math.random(),
+                                name: fileName,
+                                url: url,
+                                duration: 0,
+                                blob: file,
+                                type: file.type || 'audio/mpeg'
+                            };
+                            
+                            this.sounds.push(sound);
+                            this.saveSounds();
+                            
+                            // Clean up event listeners
+                            audio.removeEventListener('loadedmetadata', onLoadedMetadata);
+                            audio.removeEventListener('error', onError);
+                            audio.removeEventListener('canplaythrough', onCanPlay);
+                            
+                            resolve();
+                        }
+                    }, 5000);
+                });
+            }
+
+            saveSounds() {
+                try {
+                    // Convert sounds to a format suitable for storage
+                    const soundsData = this.sounds.map(sound => ({
+                        id: sound.id,
+                        name: sound.name,
+                        duration: sound.duration,
+                        type: sound.type || 'audio/webm'
+                    }));
+                    
+                    localStorage.setItem('soundboardData', JSON.stringify(soundsData));
+                    
+                    // Save audio blobs to IndexedDB for persistence
+                    this.saveSoundsToIndexedDB();
+                } catch (error) {
+                    console.error('Error saving sounds:', error);
+                }
+            }
+
+            async saveSoundsToIndexedDB() {
+                return new Promise((resolve, reject) => {
+                    const request = indexedDB.open('SoundboardDB', 1);
+                    
+                    request.onerror = () => reject(request.error);
+                    
+                    request.onsuccess = (event) => {
+                        const db = event.target.result;
+                        const transaction = db.transaction(['sounds'], 'readwrite');
+                        const store = transaction.objectStore('sounds');
+                        
+                        // Clear existing sounds
+                        store.clear();
+                        
+                        // Add current sounds
+                        this.sounds.forEach(sound => {
+                            store.put({
+                                id: sound.id,
+                                name: sound.name,
+                                duration: sound.duration,
+                                type: sound.type || 'audio/webm',
+                                blob: sound.blob
+                            });
+                        });
+                        
+                        transaction.oncomplete = () => resolve();
+                        transaction.onerror = () => reject(transaction.error);
+                    };
+                    
+                    request.onupgradeneeded = (event) => {
+                        const db = event.target.result;
+                        if (!db.objectStoreNames.contains('sounds')) {
+                            db.createObjectStore('sounds', { keyPath: 'id' });
+                        }
+                    };
+                });
+            }
+
+            async loadSounds() {
+                try {
+                    // Load from IndexedDB first (has audio data)
+                    await this.loadSoundsFromIndexedDB();
+                } catch (error) {
+                    console.error('Error loading sounds:', error);
+                    this.statusDiv.textContent = 'Welcome! Record or upload sounds to get started.';
+                }
+            }
+
+            async loadSoundsFromIndexedDB() {
+                return new Promise((resolve, reject) => {
+                    const request = indexedDB.open('SoundboardDB', 1);
+                    
+                    request.onerror = () => {
+                        console.log('IndexedDB not available, starting fresh');
+                        resolve();
+                    };
+                    
+                    request.onsuccess = (event) => {
+                        const db = event.target.result;
+                        
+                        if (!db.objectStoreNames.contains('sounds')) {
+                            resolve();
+                            return;
+                        }
+                        
+                        const transaction = db.transaction(['sounds'], 'readonly');
+                        const store = transaction.objectStore('sounds');
+                        const getAllRequest = store.getAll();
+                        
+                        getAllRequest.onsuccess = () => {
+                            const savedSounds = getAllRequest.result;
+                            
+                            this.sounds = savedSounds.map(sound => ({
+                                ...sound,
+                                url: URL.createObjectURL(sound.blob)
+                            }));
+                            
+                            if (this.sounds.length > 0) {
+                                this.statusDiv.textContent = `Loaded ${this.sounds.length} saved sound(s)`;
+                            }
+                            
+                            resolve();
+                        };
+                        
+                        getAllRequest.onerror = () => {
+                            console.error('Error loading sounds from IndexedDB');
+                            resolve();
+                        };
+                    };
+                    
+                    request.onupgradeneeded = (event) => {
+                        const db = event.target.result;
+                        if (!db.objectStoreNames.contains('sounds')) {
+                            db.createObjectStore('sounds', { keyPath: 'id' });
+                        }
+                    };
+                });
+            }
+
+            async exportSoundboard() {
+                if (this.sounds.length === 0) {
+                    alert('No sounds to export!');
+                    return;
+                }
+                
+                try {
+                    // Create export data with base64 encoded audio
+                    const exportData = {
+                        version: '1.0',
+                        timestamp: new Date().toISOString(),
+                        sounds: []
+                    };
+                    
+                    for (const sound of this.sounds) {
+                        const arrayBuffer = await sound.blob.arrayBuffer();
+                        const base64 = btoa(String.fromCharCode(...new Uint8Array(arrayBuffer)));
+                        
+                        exportData.sounds.push({
+                            id: sound.id,
+                            name: sound.name,
+                            duration: sound.duration,
+                            type: sound.type || 'audio/webm',
+                            data: base64
+                        });
+                    }
+                    
+                    // Download as JSON file
+                    const blob = new Blob([JSON.stringify(exportData, null, 2)], { 
+                        type: 'application/json' 
+                    });
+                    const url = URL.createObjectURL(blob);
+                    
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = `soundboard-backup-${new Date().toISOString().split('T')[0]}.json`;
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                    URL.revokeObjectURL(url);
+                    
+                    this.statusDiv.textContent = 'Soundboard exported successfully!';
+                } catch (error) {
+                    console.error('Export error:', error);
+                    alert('Error exporting soundboard. Please try again.');
+                }
+            }
+
+            async handleImport(event) {
+                const file = event.target.files[0];
+                if (!file) return;
+                
+                try {
+                    const text = await file.text();
+                    const importData = JSON.parse(text);
+                    
+                    if (!importData.sounds || !Array.isArray(importData.sounds)) {
+                        throw new Error('Invalid soundboard file format');
+                    }
+                    
+                    const confirmReplace = confirm(
+                        `This will replace your current soundboard with ${importData.sounds.length} sounds. Continue?`
+                    );
+                    
+                    if (!confirmReplace) {
+                        event.target.value = '';
+                        return;
+                    }
+                    
+                    // Clear existing sounds
+                    this.sounds.forEach(sound => URL.revokeObjectURL(sound.url));
+                    this.sounds = [];
+                    
+                    // Import new sounds
+                    for (const soundData of importData.sounds) {
+                        const binaryString = atob(soundData.data);
+                        const bytes = new Uint8Array(binaryString.length);
+                        for (let i = 0; i < binaryString.length; i++) {
+                            bytes[i] = binaryString.charCodeAt(i);
+                        }
+                        
+                        const blob = new Blob([bytes], { type: soundData.type });
+                        const url = URL.createObjectURL(blob);
+                        
+                        this.sounds.push({
+                            id: soundData.id,
+                            name: soundData.name,
+                            duration: soundData.duration,
+                            type: soundData.type,
+                            blob: blob,
+                            url: url
+                        });
+                    }
+                    
+                    this.saveSounds();
+                    this.updateUI();
+                    this.statusDiv.textContent = `Successfully imported ${importData.sounds.length} sounds!`;
+                    
+                } catch (error) {
+                    console.error('Import error:', error);
+                    alert('Error importing soundboard file. Please check the file format.');
+                } finally {
+                    event.target.value = '';
+                }
             }
         }
 
